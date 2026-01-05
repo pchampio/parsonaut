@@ -1,7 +1,7 @@
 import json
 import re
 import sys
-from argparse import SUPPRESS, Action
+from argparse import SUPPRESS, Action, RawDescriptionHelpFormatter
 from argparse import ArgumentParser as _ArgumentParser
 from argparse import ArgumentTypeError
 from collections import defaultdict
@@ -26,6 +26,27 @@ BOOL_TRUE_FLAGS = ("yes", "true", "t", "y", "1")
 BOOL_FALSE_FLAGS = ("no", "false", "f", "n", "0")
 
 
+class InlineHelpFormatter(RawDescriptionHelpFormatter):
+    def __init__(self, prog):
+        super().__init__(prog, max_help_position=40, width=100)
+
+    def _format_action_invocation(self, action):
+        if not action.option_strings:
+            default = self._get_default_metavar_for_positional(action)
+            (metavar,) = self._metavar_formatter(action, default)(1)
+            return metavar
+        else:
+            parts = []
+            if action.nargs == 0:
+                parts.extend(action.option_strings)
+            else:
+                default = self._get_default_metavar_for_optional(action)
+                args_string = self._format_args(action, default)
+                for option_string in action.option_strings:
+                    parts.append(f'{option_string} {args_string}')
+            return ', '.join(parts)
+
+
 class ArgumentParser(_ArgumentParser):
     def __init__(self, *args, **kwargs):
         self.lazy_roots = list()
@@ -37,6 +58,7 @@ class ArgumentParser(_ArgumentParser):
         # args.
         self._lazy_without_dest = False
 
+        kwargs.setdefault('formatter_class', InlineHelpFormatter)
         super().__init__(*args, **kwargs)
 
     def add_options(self, lzy: Lazy, dest: str | None = None):
@@ -59,6 +81,10 @@ class ArgumentParser(_ArgumentParser):
 
     def _add_options(self, lzy: Lazy, prefix: str = ""):
         self.add_argument(f"--{prefix}_class", default=lzy.cls, help=SUPPRESS)
+        
+        # Extract help text from dataclass fields if available
+        field_help = getattr(lzy.cls, '__field_help__', {})
+        
         for k, (typ, value) in sorted(lzy.signature.items()):
             if Lazy.is_lazy_type(typ):
                 if isinstance(value, Choices):
@@ -77,9 +103,10 @@ class ArgumentParser(_ArgumentParser):
                 else:
                     self._add_options(value, prefix=f"{prefix}{k}.")
             else:
-                self.add_option(f"{prefix}{k}", value, typ)
+                help_text = field_help.get(k)
+                self.add_option(f"{prefix}{k}", value, typ, help_text=help_text)
 
-    def add_option(self, name, value, typ):
+    def add_option(self, name, value, typ, help_text=None):
         assert isinstance(name, str)
         assert not self._lazy_without_dest
 
@@ -92,50 +119,56 @@ class ArgumentParser(_ArgumentParser):
 
         # bool
         if is_bool_type(typ):
-            self.add_argument(
-                name,
-                type=str2bool,
-                default=value if value is not Missing else None,
-                metavar=f"{typ.__name__}",
-                required=required,
-                # For int | None and similar, the user can specify --foo without a value.
-                # In such case, the const=None value is used.
-                nargs="?" if is_optional else None,
-            )
+            kwargs = {
+                "type": str2bool,
+                "default": value if value is not Missing else None,
+                "metavar": f"{typ.__name__}",
+                "required": required,
+                "nargs": "?" if is_optional else None,
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
         # dict (JSON)
         elif is_dict_type(typ, check_val):
-            self.add_argument(
-                name,
-                type=str2json,
-                default=value if value is not Missing else None,
-                metavar="json",
-                required=required,
-                nargs="?" if is_optional else None,
-            )
+            kwargs = {
+                "type": str2json,
+                "default": value if value is not Missing else None,
+                "metavar": "json",
+                "required": required,
+                "nargs": "?" if is_optional else None,
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
         # Path
         elif is_path_type(typ, check_val):
-            self.add_argument(
-                name,
-                type=str2path,
-                default=value if value is not Missing else None,
-                metavar="path",
-                required=required,
-                nargs="?" if is_optional else None,
-            )
+            kwargs = {
+                "type": str2path,
+                "default": value if value is not Missing else None,
+                "metavar": "path",
+                "required": required,
+                "nargs": "?" if is_optional else None,
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
         # int | float | str
         elif (
             is_int_type(typ, check_val)
             or is_str_type(typ, check_val)
             or is_float_type(typ, check_val)
         ):
-            self.add_argument(
-                name,
-                type=typ,
-                default=value,
-                metavar=f"{typ.__name__}",
-                required=required,
-                nargs="?" if is_optional else None,
-            )
+            kwargs = {
+                "type": typ,
+                "default": value,
+                "metavar": f"{typ.__name__}",
+                "required": required,
+                "nargs": "?" if is_optional else None,
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
         # tuple[bool | int | float |str , ...]
         elif is_flat_tuple_type(typ, check_val):
             subtyp, nitems = get_flat_tuple_inner_type(typ)
@@ -145,15 +178,17 @@ class ArgumentParser(_ArgumentParser):
             else:
                 metavar = f"{subtyp.__name__}"
 
-            self.add_argument(
-                name,
-                nargs=nargs,
-                metavar=metavar,
-                type=subtyp if subtyp != bool else str2bool,
-                default=tuple(value) if value is not Missing else None,
-                required=required,
-                action=collect_as(tuple),
-            )
+            kwargs = {
+                "nargs": nargs,
+                "metavar": metavar,
+                "type": subtyp if subtyp != bool else str2bool,
+                "default": tuple(value) if value is not Missing else None,
+                "required": required,
+                "action": collect_as(tuple),
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
         else:
             raise
 

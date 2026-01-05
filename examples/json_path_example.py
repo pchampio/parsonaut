@@ -19,10 +19,10 @@ from parsonaut import Parsable
 class ExperimentConfig(Parsable):
     def __init__(
         self,
-        hyperparams: dict = {"learning_rate": 0.001, "batch_size": 32},
-        output_dir: Path = Path("/tmp/experiments"),
-        name: str = "default_experiment",
-        max_files: int = 100,
+        hyperparams: dict = {"learning_rate": 0.001, "batch_size": 32},  # hyperparameters as JSON dict
+        output_dir: Path = Path("/tmp/experiments"),  # output directory path
+        name: str = "default_experiment",             # experiment name
+        max_files: int = 100,                         # maximum number of files to process
     ):
         self.hyperparams = hyperparams
         self.output_dir = output_dir

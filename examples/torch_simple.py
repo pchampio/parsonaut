@@ -19,12 +19,10 @@ options:
   --opt.weight_decay float
 """
 
-from dataclasses import dataclass
-
 import torch.nn as nn
 from torch.optim import SGD as SGD_
 
-from parsonaut import Lazy, Parsable
+from parsonaut import Lazy, Parsable, dataclass
 
 
 # Use CheckpointMixin for torch classes that
@@ -33,8 +31,8 @@ class Model(nn.Module, Parsable):
     def __init__(
         self,
         # Use str, int, float, bool, or tuple of those
-        in_channels: int = 4,
-        out_channels: int = 2,
+        in_channels: int = 4, # Number of input features
+        out_channels: int = 2, # Number of output features
     ):
         super().__init__()
         self.linear = nn.Linear(in_channels, out_channels)
