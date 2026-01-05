@@ -21,7 +21,7 @@ Parsonaut makes your experiments
 To install the library, clone the repository and use `pip`:
 
 ```bash
-pip install git+https://github.com/janvainer/parsonaut.git
+pip install git+https://github.com/pchampio/parsonaut.git
 ```
 
 ### Usage
