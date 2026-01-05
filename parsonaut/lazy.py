@@ -1,9 +1,10 @@
 from enum import Enum
 from functools import partial
+from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, ParamSpec, Type, TypeVar, get_args
 
 from .serialization import Serializable, maybe_import
-from .typecheck import Missing, MissingType, is_flat_tuple_type, is_parsable_type
+from .typecheck import Missing, MissingType, is_dict_type, is_flat_tuple_type, is_parsable_type, is_path_type
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -39,13 +40,20 @@ class Lazy(Generic[T, P], Serializable):
         object.__setattr__(self, "_signature", signature)
 
     def __hash__(self) -> int:
-        return hash(
-            tuple(
-                self.to_dict(
-                    with_annotations=True, with_class_tag=True, flatten=True
-                ).items()
-            )
-        )
+        def make_hashable(obj):
+            if isinstance(obj, dict):
+                return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
+            elif isinstance(obj, (list, tuple)):
+                return tuple(make_hashable(item) for item in obj)
+            elif isinstance(obj, Path):
+                return str(obj)
+            else:
+                return obj
+        
+        items = self.to_dict(
+            with_annotations=True, with_class_tag=True, flatten=True
+        ).items()
+        return hash(tuple((k, make_hashable(v)) for k, v in items))
 
     def __eq__(self, __value: "object | Lazy") -> bool:
         return hash(self) == hash(__value)
@@ -163,7 +171,23 @@ class Lazy(Generic[T, P], Serializable):
         if fields is None:
             return Lazy.from_dict(dct)
 
+        # Wrap user dict values in fields before flattening
+        cls_sig = get_signature(self.cls.__init__)
+        for k in list(fields.keys()):
+            if k in cls_sig and k != TYPE_NAME:
+                typ, _ = cls_sig[k]
+                if is_dict_type(typ, None) and isinstance(fields[k], dict):
+                    fields[k] = _DictValue(fields[k])
+        
         fields = flatten_dict(fields)
+        
+        # Convert Path strings to Path objects before merging
+        cls_sig = get_signature(self.cls.__init__)
+        for k in list(fields.keys()):
+            if k in cls_sig:
+                typ, _ = cls_sig[k]
+                if is_path_type(typ, None) and isinstance(fields[k], str):
+                    fields[k] = Path(fields[k])
 
         # Ensure we iterate over class types first (if present)
         fields = dict(
@@ -226,6 +250,9 @@ class Lazy(Generic[T, P], Serializable):
             if tuples_as_lists and is_flat_tuple_type(typ, value):
                 value = list(value)
 
+            if is_path_type(typ, value):
+                value = str(value) if value is not None else None
+
             if Lazy.is_lazy_type(typ):
                 if recursive:
                     assert isinstance(value, Lazy)
@@ -243,6 +270,11 @@ class Lazy(Generic[T, P], Serializable):
                     dct[k] = value
 
         if flatten:
+            # Wrap user dict values before flattening
+            for k, (typ, val) in sorted(self.signature.items()):
+                if k in dct and isinstance(dct[k], dict) and not Lazy.is_lazy_type(typ):
+                    # This is a user dict value, not a nested Lazy config
+                    dct[k] = _DictValue(dct[k])
             dct = flatten_dict(dct)
 
         return dct
@@ -258,17 +290,37 @@ class Lazy(Generic[T, P], Serializable):
 
         cls = maybe_import(dct[TYPE_NAME])
 
+        lazy_sig = Lazy.get_signature(cls.__init__)
+        
         for k, v in dct.items():
             if k == TYPE_NAME:
                 continue
             elif isinstance(v, dict):
-                signature[k] = Lazy.from_dict(v)
+                if TYPE_NAME in v:
+                    signature[k] = Lazy.from_dict(v)
+                elif k in lazy_sig:
+                    typ, _ = lazy_sig[k]
+                    if is_dict_type(typ, None):
+                        signature[k] = v
+                    else:
+                        signature[k] = Lazy.from_dict(v)
+                else:
+                    signature[k] = v
+            elif isinstance(v, str):
+                if k in lazy_sig:
+                    typ, _ = lazy_sig[k]
+                    if is_path_type(typ, None):
+                        signature[k] = Path(v)
+                    else:
+                        signature[k] = v
+                else:
+                    signature[k] = v
             else:
                 # We store tuples as lists in json/yaml. Here we convert them back.
                 if isinstance(v, list):
                     v = tuple(v)
                 signature[k] = v
-
+        
         # Note: Allow loading dict that can be missing non-parsable parameters.
         #    Such a dict is created eg when usign Parsable.to_checkpoint() --> we only export parsable parameters and rest is ommited.
         #    When we load it back, we want Lazy to fill in the non-parsable stuff with defaults from the class.
@@ -347,6 +399,12 @@ def get_signature(func: Callable, *args, **kwargs) -> dict[str, tuple[Type, Any]
     return ret
 
 
+class _DictValue:
+    """Wrapper to prevent user dict values from being flattened."""
+    def __init__(self, value):
+        self.value = value
+
+
 def flatten_dict(dct: dict) -> dict:
 
     def _flatten(dct, prefix: str):
@@ -354,7 +412,9 @@ def flatten_dict(dct: dict) -> dict:
         for k, v in dct.items():
             if prefix:
                 k = f"{prefix}.{k}"
-            if isinstance(v, dict):
+            if isinstance(v, _DictValue):
+                out.append((k, v.value))
+            elif isinstance(v, dict):
                 out.extend(_flatten(v, prefix=k))
             else:
                 out.append((k, v))

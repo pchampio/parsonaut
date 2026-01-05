@@ -1,9 +1,11 @@
 from builtins import Ellipsis
 from functools import lru_cache
+from pathlib import Path
 from types import UnionType
 from typing import Any, Type, Union, get_args, get_origin
 
 BASIC_TYPES = (int, float, bool, str)
+EXTENDED_TYPES = (int, float, bool, str, dict, Path)
 
 
 class MissingType:
@@ -37,6 +39,22 @@ def is_bool_type(typ: Type, value: Any | None = None) -> bool:
 
 def is_str_type(typ: Type, value: Any | None = None) -> bool:
     return _is_basic_type(typ, str, value)
+
+
+def is_dict_type(typ: Type, value: Any | None = None) -> bool:
+    typ_ok = typ == dict or get_origin(typ) == dict
+    if value is None:
+        return typ_ok
+    else:
+        return typ_ok and isinstance(value, dict)
+
+
+def is_path_type(typ: Type, value: Any | None = None) -> bool:
+    typ_ok = typ == Path
+    if value is None:
+        return typ_ok
+    else:
+        return typ_ok and isinstance(value, Path)
 
 
 def is_flat_tuple_type(typ: Type, value: Any | None = None) -> bool:
@@ -139,6 +157,8 @@ def is_parsable_type_single(typ: Type, value: Any | None = None) -> bool:
             is_bool_type(typ, value),
             is_str_type(typ, value),
             is_flat_tuple_type(typ, value),
+            is_dict_type(typ, value),
+            is_path_type(typ, value),
         )
     )
 

@@ -1,9 +1,11 @@
+import json
 import re
 import sys
 from argparse import SUPPRESS, Action
 from argparse import ArgumentParser as _ArgumentParser
 from argparse import ArgumentTypeError
 from collections import defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 
 from parsonaut.lazy import TYPE_NAME, Choices, Lazy
@@ -11,10 +13,12 @@ from parsonaut.typecheck import (
     Missing,
     get_flat_tuple_inner_type,
     is_bool_type,
+    is_dict_type,
     is_flat_tuple_type,
     is_float_type,
     is_int_type,
     is_optional_single_type,
+    is_path_type,
     is_str_type,
 )
 
@@ -96,6 +100,26 @@ class ArgumentParser(_ArgumentParser):
                 required=required,
                 # For int | None and similar, the user can specify --foo without a value.
                 # In such case, the const=None value is used.
+                nargs="?" if is_optional else None,
+            )
+        # dict (JSON)
+        elif is_dict_type(typ, check_val):
+            self.add_argument(
+                name,
+                type=str2json,
+                default=value if value is not Missing else None,
+                metavar="json",
+                required=required,
+                nargs="?" if is_optional else None,
+            )
+        # Path
+        elif is_path_type(typ, check_val):
+            self.add_argument(
+                name,
+                type=str2path,
+                default=value if value is not Missing else None,
+                metavar="path",
+                required=required,
                 nargs="?" if is_optional else None,
             )
         # int | float | str
@@ -238,3 +262,21 @@ def str2bool(v):
         return False
     else:
         raise ArgumentTypeError("Boolean value expected.")
+
+
+def str2json(v):
+    if isinstance(v, dict):
+        return v
+    try:
+        result = json.loads(v)
+        if not isinstance(result, dict):
+            raise ArgumentTypeError("JSON value must be a dict/object.")
+        return result
+    except json.JSONDecodeError as e:
+        raise ArgumentTypeError(f"Invalid JSON: {e}")
+
+
+def str2path(v):
+    if isinstance(v, Path):
+        return v
+    return Path(v)
