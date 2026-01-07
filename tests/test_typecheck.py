@@ -5,8 +5,10 @@ import pytest
 
 from parsonaut.typecheck import (
     BASIC_TYPES,
+    get_flat_list_inner_type,
     get_flat_tuple_inner_type,
     is_bool_type,
+    is_flat_list_type,
     is_flat_tuple_type,
     is_float_type,
     is_int_type,
@@ -150,3 +152,48 @@ def test_is_parsable_type_accepts(typ):
 )
 def test_is_optional_single_type(typ, value, expected):
     assert is_optional_single_type(typ, value) == expected
+
+
+@pytest.mark.parametrize(
+    "inner_typ",
+    BASIC_TYPES,
+)
+def test_is_flat_list_type_accepts_base_types(inner_typ):
+    assert is_flat_list_type(list[inner_typ])
+
+    val = inner_typ()
+    assert is_flat_list_type(list[inner_typ], [val])
+    assert is_flat_list_type(list[inner_typ], [val, val, val])
+
+
+def test_is_flat_list_type_rejects_empty_list():
+    assert not is_flat_list_type(list)
+
+
+def test_is_flat_list_type_rejects_non_list():
+    assert not is_flat_list_type(tuple[int])
+    assert not is_flat_list_type(int)
+
+
+def test_is_flat_list_type_rejects_mismatched_values():
+    assert not is_flat_list_type(list[int], [1.0])
+    assert not is_flat_list_type(list[int], [1, 1.0])
+    assert not is_flat_list_type(list[str], ["hello", 1])
+
+
+def test_is_flat_list_type_accepts_empty_list():
+    # Empty lists are valid for any list[T] type
+    assert is_flat_list_type(list[int], [])
+    assert is_flat_list_type(list[str], [])
+
+
+def test_get_flat_list_inner_type_accepted_cases():
+    assert get_flat_list_inner_type(list[int]) == int
+    assert get_flat_list_inner_type(list[str]) == str
+    assert get_flat_list_inner_type(list[float]) == float
+    assert get_flat_list_inner_type(list[bool]) == bool
+
+
+def test_get_flat_list_inner_type_raises_on_invalid_cases():
+    with pytest.raises(AssertionError):
+        get_flat_list_inner_type(list)

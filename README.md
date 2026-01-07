@@ -80,9 +80,3 @@ Moreover, you can dynamically select which classes to use via enums.
 To explore more advanced features, please see the following tutorials:
 - [zero](examples/torch_simple.py) - simple, but complete experiment
 - [hero](examples/torch_full.py) - dynamic and nested configurations
-
-## Acknowledgements
-
-This is a fork of [janvainer/parsonaut](https://github.com/janvainer/parsonaut).
-
-Parsonaut was inspired by [simple-parsing](https://github.com/lebrice/SimpleParsing).

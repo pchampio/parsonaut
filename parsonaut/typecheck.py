@@ -57,6 +57,62 @@ def is_path_type(typ: Type, value: Any | None = None) -> bool:
         return typ_ok and isinstance(value, Path)
 
 
+def is_list_type(typ: Type, value: Any | None = None) -> bool:
+    typ_ok = typ == list or get_origin(typ) == list
+    if value is None:
+        return typ_ok
+    else:
+        return typ_ok and isinstance(value, list)
+
+
+def is_flat_list_type(typ: Type, value: Any | None = None) -> bool:
+    """Check if `typ` is a flat list type, optionally validate a value against it.
+
+    The inner type must be one of the basic types - int, float, bool or str.
+    All elements must be of the same type.
+
+    Examples of passing inputs:
+
+            - list[int], [1, 2]
+            - list[str], ["a", "b", "c"]
+
+    Examples of failing inputs:
+
+            - list[int], [1, "2"]
+            - list, [1, 2, 3]
+
+    Args:
+        typ (Type): The type to check.
+        value (Any | None, optional): The value to compare against the type. Defaults to None.
+
+    Returns:
+        bool: True if the type is a flat list type, False otherwise.
+    """
+    args = get_args(typ)
+
+    if value is None:
+        return _is_flat_list_type(typ, args)
+    else:
+        if not (isinstance(value, list) and _is_flat_list_type(typ, args)):
+            return False
+        # For list[Any], accept any list contents
+        if len(args) > 0 and args[0] is Any:
+            return True
+        # For other types, validate element types
+        return len(value) == 0 or all(isinstance(item, args[0]) for item in value)
+
+
+@lru_cache(maxsize=1)
+def _is_flat_list_type(typ: Type, args):
+    return (
+        # Container is a list and contains inner annotation
+        get_origin(typ) == list
+        # The inner annotation is a BasicType or Any
+        and len(args) > 0
+        and (args[0] in BASIC_TYPES or args[0] is Any)
+    )
+
+
 def is_flat_tuple_type(typ: Type, value: Any | None = None) -> bool:
     """Check if `typ` is a flat tuple type, optionally validate a value against it.
 
@@ -93,21 +149,35 @@ def is_flat_tuple_type(typ: Type, value: Any | None = None) -> bool:
         )
 
 
+def is_union_type(typ: Type):
+    """Check if typ is a Union type."""
+    return (
+        isinstance(typ, UnionType)
+        or getattr(typ, "__origin__", None) is Union
+    )
+
+
+def get_union_args(typ: Type):
+    """Get union arguments, separating None from other types."""
+    if not is_union_type(typ):
+        return [], False
+    
+    args = get_args(typ)
+    non_none_args = [a for a in args if a is not type(None)]
+    has_none = len(non_none_args) < len(args)
+    return non_none_args, has_none
+
+
 def is_optional_single_type(typ: Type, value: Any | None):
     """
     Returns (True, T) if tp is exactly Optional[T], i.e., Union[T, None] with only one non-None type.
     Returns (False, tp) otherwise.
     """
-    if (
-        isinstance(typ, UnionType)  # e.g. int | None
-        or getattr(typ, "__origin__", None) is Union
-    ):
-        args = get_args(typ)
-        non_none_args = [a for a in args if a is not type(None)]
-        if len(non_none_args) == 1:
-            typ = non_none_args[0]
-            is_ok = True if value is None else isinstance(value, typ)
-            return is_ok, non_none_args[0]
+    non_none_args, has_none = get_union_args(typ)
+    if has_none and len(non_none_args) == 1:
+        typ = non_none_args[0]
+        is_ok = True if value is None else isinstance(value, typ)
+        return is_ok, non_none_args[0]
     return False, typ
 
 
@@ -133,11 +203,27 @@ def is_parsable_type(typ: Type, value: Any | None = None) -> bool:
     Returns:
         bool: True if the type is parsable, False otherwise.
     """
+    # Check for multi-type unions
+    union_args, has_none = get_union_args(typ)
+    if len(union_args) > 1:
+        # Multi-type union: check if value matches one of the types
+        if value is None:
+            # For None value, just check if the union allows None and has at least one parsable type
+            return has_none and any(is_parsable_type_single(t, None) or is_bare_container(t) for t in union_args)
+        else:
+            # Check if value matches any of the union types
+            return any(is_parsable_type_single(t, value) for t in union_args)
+    
     is_optional, inner_type = is_optional_single_type(typ, value)
     if is_optional:
         return is_parsable_type_single(inner_type, value)
     else:
         return is_parsable_type_single(typ, value)
+
+
+def is_bare_container(typ: Type) -> bool:
+    """Check if type is a bare container like list or dict without type parameters."""
+    return typ in (list, dict)
 
 
 def is_parsable_type_single(typ: Type, value: Any | None = None) -> bool:
@@ -150,6 +236,13 @@ def is_parsable_type_single(typ: Type, value: Any | None = None) -> bool:
     Returns:
         bool: True if the type is parsable, False otherwise.
     """
+    # Handle bare containers (list, dict) when checking values
+    if value is not None:
+        if typ == list and isinstance(value, list):
+            return True
+        if typ == dict and isinstance(value, dict):
+            return True
+    
     return any(
         (
             is_int_type(typ, value),
@@ -157,6 +250,7 @@ def is_parsable_type_single(typ: Type, value: Any | None = None) -> bool:
             is_bool_type(typ, value),
             is_str_type(typ, value),
             is_flat_tuple_type(typ, value),
+            is_flat_list_type(typ, value),
             is_dict_type(typ, value),
             is_path_type(typ, value),
         )
@@ -195,3 +289,27 @@ def get_flat_tuple_inner_type(typ: Type[tuple]) -> tuple[Type, int]:
             subt == basetype for subt in args
         ), "All inner types must be the same."
         return basetype, len(args)
+
+
+def get_flat_list_inner_type(typ: Type[list]) -> Type:
+    """
+    Get the inner type of a flat list.
+
+    Args:
+        typ (Type[list]): The type of the list.
+
+    Returns:
+        Type: The inner type of the flat list.
+
+    Raises:
+        AssertionError: If the type is not a valid flat list type.
+
+    """
+    args = get_args(typ)
+    assert len(args) > 0, "List type must have at least one argument."
+    basetype = args[0]
+    assert basetype in BASIC_TYPES, (
+        "The inner type must be one of the basic types: "
+        f"{BASIC_TYPES}."
+    )
+    return basetype

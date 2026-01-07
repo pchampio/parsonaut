@@ -11,9 +11,12 @@ from types import SimpleNamespace
 from parsonaut.lazy import TYPE_NAME, Choices, Lazy
 from parsonaut.typecheck import (
     Missing,
+    get_flat_list_inner_type,
     get_flat_tuple_inner_type,
+    get_union_args,
     is_bool_type,
     is_dict_type,
+    is_flat_list_type,
     is_flat_tuple_type,
     is_float_type,
     is_int_type,
@@ -114,6 +117,22 @@ class ArgumentParser(_ArgumentParser):
         check_val = value if value is not Missing else None
         required = False
 
+        # Check for multi-type unions (e.g., list | str | None)
+        union_args, has_none = get_union_args(typ)
+        if len(union_args) > 1:
+            # Multi-type union: try str2union converter
+            kwargs = {
+                "type": str2union(*union_args, has_none=has_none),
+                "default": value if value is not Missing else None,
+                "metavar": "value",
+                "required": required,
+                "nargs": "?" if has_none else None,
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
+            return
+
         # Optional args not supported for tuples yet
         is_optional, typ = is_optional_single_type(typ, None)
 
@@ -185,6 +204,18 @@ class ArgumentParser(_ArgumentParser):
                 "default": tuple(value) if value is not Missing else None,
                 "required": required,
                 "action": collect_as(tuple),
+            }
+            if help_text:
+                kwargs["help"] = help_text
+            self.add_argument(name, **kwargs)
+        # list[bool | int | float | str]
+        elif is_flat_list_type(typ, check_val):
+            kwargs = {
+                "type": str2json_list,
+                "default": value if value is not Missing else None,
+                "metavar": "json",
+                "required": required,
+                "nargs": "?" if is_optional else None,
             }
             if help_text:
                 kwargs["help"] = help_text
@@ -315,3 +346,45 @@ def str2path(v):
     if isinstance(v, Path):
         return v
     return Path(v)
+
+
+def str2json_list(v):
+    if isinstance(v, list):
+        return v
+    try:
+        result = json.loads(v)
+        if not isinstance(result, list):
+            raise ArgumentTypeError("JSON value must be a list/array.")
+        return result
+    except json.JSONDecodeError as e:
+        raise ArgumentTypeError(f"Invalid JSON: {e}")
+
+
+def str2union(*types, has_none=False):
+    """Create a converter for union types like list | str."""
+    def converter(v):
+        # If the union includes None and we get an empty string, return None
+        if has_none and v == '':
+            return None
+        
+        # Try each type in order
+        for typ in types:
+            try:
+                if typ == str:
+                    return v
+                elif typ == int:
+                    return int(v)
+                elif typ == float:
+                    return float(v)
+                elif typ == bool:
+                    return str2bool(v)
+                elif typ == list or (hasattr(typ, '__origin__') and typ.__origin__ == list):
+                    return str2json_list(v)
+                elif typ == dict or (hasattr(typ, '__origin__') and typ.__origin__ == dict):
+                    return str2json(v)
+                elif typ == Path:
+                    return str2path(v)
+            except (ValueError, ArgumentTypeError, json.JSONDecodeError):
+                continue
+        raise ArgumentTypeError(f"Value must be one of {[t.__name__ if hasattr(t, '__name__') else str(t) for t in types]}")
+    return converter

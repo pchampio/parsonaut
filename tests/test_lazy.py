@@ -272,7 +272,7 @@ def test_unflatten_dict():
 
 def test_Lazy_skips_nonparsable_without_defaults():
     class DummyFlat(Lazy):
-        def __init__(self, a: list[str]):
+        def __init__(self, a: list[list[str]]):
             pass
 
     s = Lazy.from_class(DummyFlat)

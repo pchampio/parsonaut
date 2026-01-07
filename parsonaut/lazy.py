@@ -290,6 +290,8 @@ class Lazy(Generic[T, P], Serializable):
 
         cls = maybe_import(dct[TYPE_NAME])
 
+        # Get ALL parameter types (not just parsable ones) for type conversion
+        raw_sig = get_signature(cls.__init__)
         lazy_sig = Lazy.get_signature(cls.__init__)
         
         for k, v in dct.items():
@@ -317,8 +319,11 @@ class Lazy(Generic[T, P], Serializable):
                     signature[k] = v
             else:
                 # We store tuples as lists in json/yaml. Here we convert them back.
-                if isinstance(v, list):
-                    v = tuple(v)
+                if isinstance(v, list) and k in raw_sig:
+                    typ, _ = raw_sig[k]
+                    # Only convert to tuple if the type annotation is a tuple type
+                    if is_flat_tuple_type(typ, None):
+                        v = tuple(v)
                 signature[k] = v
         
         # Note: Allow loading dict that can be missing non-parsable parameters.
