@@ -2,7 +2,7 @@ from builtins import Ellipsis
 from functools import lru_cache
 from pathlib import Path
 from types import UnionType
-from typing import Any, Type, Union, get_args, get_origin
+from typing import Any, Literal, Type, Union, get_args, get_origin
 
 BASIC_TYPES = (int, float, bool, str)
 EXTENDED_TYPES = (int, float, bool, str, dict, Path)
@@ -55,6 +55,25 @@ def is_path_type(typ: Type, value: Any | None = None) -> bool:
         return typ_ok
     else:
         return typ_ok and isinstance(value, Path)
+
+
+def is_literal_type(typ: Type, value: Any | None = None) -> bool:
+    """Check if typ is a Literal type."""
+    origin = get_origin(typ)
+    if origin is not Literal:
+        return False
+    
+    if value is None:
+        return True
+    
+    args = get_args(typ)
+    return value in args
+
+
+def get_literal_choices(typ: Type) -> tuple:
+    """Get the choices from a Literal type."""
+    assert is_literal_type(typ), f"Type {typ} is not a Literal type"
+    return get_args(typ)
 
 
 def is_list_type(typ: Type, value: Any | None = None) -> bool:
@@ -175,9 +194,17 @@ def is_optional_single_type(typ: Type, value: Any | None):
     """
     non_none_args, has_none = get_union_args(typ)
     if has_none and len(non_none_args) == 1:
-        typ = non_none_args[0]
-        is_ok = True if value is None else isinstance(value, typ)
-        return is_ok, non_none_args[0]
+        inner_typ = non_none_args[0]
+        if value is None:
+            is_ok = True
+        else:
+            # For types that can't be used with isinstance (like Literal), use is_parsable_type_single
+            try:
+                is_ok = isinstance(value, inner_typ)
+            except TypeError:
+                # Fallback for generic types that don't support isinstance
+                is_ok = is_parsable_type_single(inner_typ, value)
+        return is_ok, inner_typ
     return False, typ
 
 
@@ -253,6 +280,7 @@ def is_parsable_type_single(typ: Type, value: Any | None = None) -> bool:
             is_flat_list_type(typ, value),
             is_dict_type(typ, value),
             is_path_type(typ, value),
+            is_literal_type(typ, value),
         )
     )
 

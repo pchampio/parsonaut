@@ -13,6 +13,7 @@ from parsonaut.typecheck import (
     Missing,
     get_flat_list_inner_type,
     get_flat_tuple_inner_type,
+    get_literal_choices,
     get_union_args,
     is_bool_type,
     is_dict_type,
@@ -20,6 +21,7 @@ from parsonaut.typecheck import (
     is_flat_tuple_type,
     is_float_type,
     is_int_type,
+    is_literal_type,
     is_optional_single_type,
     is_path_type,
     is_str_type,
@@ -116,6 +118,16 @@ class ArgumentParser(_ArgumentParser):
         name = f"--{name}"
         check_val = value if value is not Missing else None
         required = False
+        
+        def add_default_to_help(help_text, default_val):
+            """Helper to append default value to help text."""
+            if default_val is None or default_val is Missing:
+                return help_text
+            # Format default value nicely
+            default_str = f"(default: {default_val})"
+            if help_text:
+                return f"{help_text} {default_str}"
+            return default_str
 
         # Check for multi-type unions (e.g., list | str | None)
         union_args, has_none = get_union_args(typ)
@@ -136,41 +148,67 @@ class ArgumentParser(_ArgumentParser):
         # Optional args not supported for tuples yet
         is_optional, typ = is_optional_single_type(typ, None)
 
+        # Literal (must come before str check since Literal values are often strings)
+        if is_literal_type(typ):
+            choices = get_literal_choices(typ)
+            default_val = value if value is not Missing else None
+            kwargs = {
+                "type": type(choices[0]) if choices else str,
+                "choices": list(choices),
+                "default": default_val,
+                "required": required,
+                "nargs": "?" if is_optional else None,
+            }
+            if help_text:
+                # Append default value to help text
+                if default_val is not None:
+                    kwargs["help"] = f"{help_text} (default: {default_val})"
+                else:
+                    kwargs["help"] = help_text
+            elif default_val is not None:
+                kwargs["help"] = f"(default: {default_val})"
+            self.add_argument(name, **kwargs)
         # bool
-        if is_bool_type(typ):
+        elif is_bool_type(typ):
+            default_val = value if value is not Missing else None
             kwargs = {
                 "type": str2bool,
-                "default": value if value is not Missing else None,
+                "default": default_val,
                 "metavar": f"{typ.__name__}",
                 "required": required,
                 "nargs": "?" if is_optional else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         # dict (JSON)
         elif is_dict_type(typ, check_val):
+            default_val = value if value is not Missing else None
             kwargs = {
                 "type": str2json,
-                "default": value if value is not Missing else None,
+                "default": default_val,
                 "metavar": "json",
                 "required": required,
                 "nargs": "?" if is_optional else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         # Path
         elif is_path_type(typ, check_val):
+            default_val = value if value is not Missing else None
             kwargs = {
                 "type": str2path,
-                "default": value if value is not Missing else None,
+                "default": default_val,
                 "metavar": "path",
                 "required": required,
                 "nargs": "?" if is_optional else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         # int | float | str
         elif (
@@ -185,8 +223,9 @@ class ArgumentParser(_ArgumentParser):
                 "required": required,
                 "nargs": "?" if is_optional else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, value)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         # tuple[bool | int | float |str , ...]
         elif is_flat_tuple_type(typ, check_val):
@@ -197,28 +236,32 @@ class ArgumentParser(_ArgumentParser):
             else:
                 metavar = f"{subtyp.__name__}"
 
+            default_val = tuple(value) if value is not Missing else None
             kwargs = {
                 "nargs": nargs,
                 "metavar": metavar,
                 "type": subtyp if subtyp != bool else str2bool,
-                "default": tuple(value) if value is not Missing else None,
+                "default": default_val,
                 "required": required,
                 "action": collect_as(tuple),
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         # list[bool | int | float | str]
         elif is_flat_list_type(typ, check_val):
+            default_val = value if value is not Missing else None
             kwargs = {
                 "type": str2json_list,
-                "default": value if value is not Missing else None,
+                "default": default_val,
                 "metavar": "json",
                 "required": required,
                 "nargs": "?" if is_optional else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
         else:
             raise
