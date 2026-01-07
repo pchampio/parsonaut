@@ -17,6 +17,7 @@ class ExperimentConfig(Parsable):
         output_dir: Path = Path("/tmp"),     # output directory
         tags: list[str] = [],                # experiment tags
         custom_config: list[Any] | str | None = None,  # custom config as list, string, or None
+        hyperparams: dict = {"learning_rate": 0.001, "batch_size": 32},  # hyperparameters as JSON dict
     ):
         self.name = name
         self.learning_rate = learning_rate
@@ -25,6 +26,7 @@ class ExperimentConfig(Parsable):
         self.output_dir = output_dir
         self.tags = tags
         self.custom_config = custom_config
+        self.hyperparams = hyperparams
 
 
 if __name__ == "__main__":
@@ -38,3 +40,4 @@ if __name__ == "__main__":
     print(f"  output_dir: {params.output_dir}")
     print(f"  tags: {params.tags}")
     print(f"  custom_config: {params.custom_config}", type(params.custom_config))
+    print(f"  hyperparams: {params.hyperparams}")

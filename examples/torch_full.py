@@ -32,9 +32,8 @@ from parsonaut import Choices, Lazy, Parsable
 class Model(nn.Module, Parsable):
     def __init__(
         self,
-        # Use str, int, float, bool, or tuple of those
-        in_channels: int = 4,
-        out_channels: int = 2,
+        in_channels: int = 4,     # number of input channels
+        out_channels: int = 2,    # number of output channels
     ):
         super().__init__()
         self.linear = nn.Linear(in_channels, out_channels)
@@ -44,11 +43,11 @@ class SGD(SGD_, Parsable):
     def __init__(
         self,
         params,
-        lr: float = 1e-3,
-        momentum: float = 0.0,
-        dampening: float = 0.0,
-        weight_decay: float = 0.0,
-        nesterov: bool = False,
+        lr: float = 1e-3,                # learning rate
+        momentum: float = 0.0,           # momentum factor
+        dampening: float = 0.0,          # dampening for momentum
+        weight_decay: float = 0.0,       # weight decay (L2 penalty)
+        nesterov: bool = False,          # enables Nesterov momentum
     ):
         super().__init__(
             params=params,
@@ -64,11 +63,11 @@ class Adam(Adam_, Parsable):
     def __init__(
         self,
         params,
-        lr: float = 1e-3,
-        betas: tuple[float, float] = (0.9, 0.999),
-        eps: float = 1e-8,
-        weight_decay: float = 0.0,
-        amsgrad: bool = False,
+        lr: float = 1e-3,                              # learning rate
+        betas: tuple[float, float] = (0.9, 0.999),    # coefficients for computing running averages
+        eps: float = 1e-8,                             # term added to denominator for numerical stability
+        weight_decay: float = 0.0,                     # weight decay (L2 penalty)
+        amsgrad: bool = False,                         # whether to use AMSGrad variant
     ):
         super().__init__(
             params=params,
