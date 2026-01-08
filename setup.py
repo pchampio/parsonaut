@@ -23,7 +23,7 @@ dev_requires = sorted(tests_require + ["pre-commit==3.6.2"])
 
 setup(
     name="parsonaut",
-    version="1.0.6",
+    version="1.0.7",
     url="https://github.com/janvainer/parsonaut.git",
     description="Auto-configure (not only) torch experiments from the CLI.",
     packages=["parsonaut"],
