@@ -47,21 +47,21 @@ class SubClasses(Choices):
     subclass2 = SubClass2.as_lazy(x=10, z="custom")
 
 
-class TestMe(Parsable):
+class ParsableMe(Parsable):
     def __init__(self, name: str, value: int, nested: SubClasses = SubClasses.sub1):
         self.name = name
         self.value = value
 
 
 def test_Parsable_from_dict_simple():
-    a = TestMe.from_dict({"name": "example", "value": 42, "nested.x": 7})
+    a = ParsableMe.from_dict({"name": "example", "value": 42, "nested.x": 7})
     assert a.name == "example"
     assert a.value == 42
     assert a.nested.x == 7
 
 
 def test_Parsable_from_dict_subclass_change():
-    c = TestMe.from_dict(
+    c = ParsableMe.from_dict(
         {
             "name": "example",
             "value": 42,
