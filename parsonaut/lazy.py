@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, ParamSpec, Type, TypeVar, get_args
 
 from .serialization import Serializable, maybe_import
-from .typecheck import Missing, MissingType, is_dict_type, is_flat_tuple_type, is_parsable_type, is_path_type
+from .typecheck import Missing, MissingType, get_union_args, is_dict_type, is_flat_tuple_type, is_parsable_type, is_path_type
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -292,7 +292,7 @@ class Lazy(Generic[T, P], Serializable):
 
         # Get ALL parameter types (not just parsable ones) for type conversion
         raw_sig = get_signature(cls.__init__)
-        lazy_sig = Lazy.get_signature(cls.__init__)
+        lazy_sig = Lazy.get_signature(cls)
         
         for k, v in dct.items():
             if k == TYPE_NAME:
@@ -302,7 +302,10 @@ class Lazy(Generic[T, P], Serializable):
                     signature[k] = Lazy.from_dict(v)
                 elif k in lazy_sig:
                     typ, _ = lazy_sig[k]
-                    if is_dict_type(typ, None):
+                    # Check if type is dict or a union containing dict
+                    union_args, _ = get_union_args(typ)
+                    is_user_dict = is_dict_type(typ, None) or dict in union_args
+                    if is_user_dict:
                         signature[k] = v
                     else:
                         signature[k] = Lazy.from_dict(v)
@@ -381,6 +384,8 @@ def set_typecheck_eager(eager: bool = True):
 
 def get_signature(func: Callable, *args, **kwargs) -> dict[str, tuple[Type, Any]]:
     """Get the signature of a function, including the types of the arguments."""
+    from dataclasses import MISSING as DC_MISSING
+    from dataclasses import fields as dataclass_fields
     from inspect import _empty, signature
 
     sig = signature(func)
@@ -390,6 +395,18 @@ def get_signature(func: Callable, *args, **kwargs) -> dict[str, tuple[Type, Any]
         bound = sig.bind_partial(*args, **kwargs)
     bound.apply_defaults()
 
+    # Get dataclass defaults if applicable (resolves field factories to actual values)
+    dataclass_defaults = {}
+    if hasattr(func, '__qualname__') and '.' in func.__qualname__:
+        class_name = func.__qualname__.rsplit('.', 1)[0]
+        cls = func.__globals__.get(class_name)
+        if cls and hasattr(cls, '__dataclass_fields__'):
+            for f in dataclass_fields(cls):
+                if f.default is not DC_MISSING:
+                    dataclass_defaults[f.name] = f.default
+                elif f.default_factory is not DC_MISSING:
+                    dataclass_defaults[f.name] = f.default_factory()
+
     ret = dict()
     for param_name, param in bound.signature.parameters.items():
         if param_name == "self":
@@ -398,6 +415,11 @@ def get_signature(func: Callable, *args, **kwargs) -> dict[str, tuple[Type, Any]
         value = bound.arguments.get(
             param_name, param.default if param.default != _empty else Missing
         )
+
+        # Resolve dataclass field factory to actual default
+        if param_name in dataclass_defaults and type(value).__name__ == '_HAS_DEFAULT_FACTORY_CLASS':
+            value = dataclass_defaults[param_name]
+
         annotation = param.annotation if param.annotation != _empty else MissingType
         ret[param_name] = (annotation, value)
 
