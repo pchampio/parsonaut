@@ -1,49 +1,64 @@
 from abc import ABCMeta
 from typing import Callable, Type
-import ast
-import inspect
-import io
-import textwrap
-import tokenize
 
 from .lazy import Lazy, P, T
 from .serialization import Serializable, is_module_available, open_best
 
 
+def _extract_field_help_from_init(cls) -> dict[str, str]:
+    """Extract inline comments from __init__ method parameters."""
+    import ast
+    import inspect
+    import io
+    import textwrap
+    import tokenize
+    
+    field_help = {}
+    try:
+        if hasattr(cls, '__init__'):
+            source = inspect.getsource(cls.__init__)
+            source = textwrap.dedent(source)
+            
+            # Collect comments by line number
+            tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+            comment_map = {}
+            for tok_type, tok_str, start, _, _ in tokens:
+                if tok_type == tokenize.COMMENT:
+                    lineno = start[0]
+                    comment_map[lineno] = tok_str.lstrip("# ").strip()
+            
+            # Parse the __init__ method to find annotated parameters
+            source_ast = ast.parse(source)
+            func_def = source_ast.body[0]
+            if isinstance(func_def, ast.FunctionDef):
+                for arg in func_def.args.args:
+                    if arg.annotation and arg.arg != 'self':
+                        help_msg = comment_map.get(arg.lineno)
+                        if help_msg:
+                            field_help[arg.arg] = help_msg
+    except (OSError, TypeError, IndexError):
+        # Source not available (e.g., interactive mode, built-in classes)
+        pass
+    
+    return field_help
+
+
+class LazyFieldHelp:
+    """Descriptor that lazily extracts field help from __init__ comments."""
+    
+    def __get__(self, obj, cls):
+        if cls is None:
+            return self
+        cache_attr = '_cached_field_help'
+        if not hasattr(cls, cache_attr):
+            setattr(cls, cache_attr, _extract_field_help_from_init(cls))
+        return getattr(cls, cache_attr)
+
+
 class ParsableMeta(ABCMeta):
     def __new__(mcs, name, bases, namespace, **kwargs):
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-        
-        # Extract inline comments for help text from __init__ method
-        field_help = {}
-        try:
-            if hasattr(cls, '__init__'):
-                source = inspect.getsource(cls.__init__)
-                source = textwrap.dedent(source)
-                
-                # Collect comments by line number
-                tokens = tokenize.generate_tokens(io.StringIO(source).readline)
-                comment_map = {}
-                for tok_type, tok_str, start, _, _ in tokens:
-                    if tok_type == tokenize.COMMENT:
-                        lineno = start[0]
-                        comment_map[lineno] = tok_str.lstrip("# ").strip()
-                
-                # Parse the __init__ method to find annotated parameters
-                source_ast = ast.parse(source)
-                func_def = source_ast.body[0]
-                if isinstance(func_def, ast.FunctionDef):
-                    for arg in func_def.args.args:
-                        if arg.annotation and arg.arg != 'self':
-                            # Find the comment on the same line as the parameter
-                            help_msg = comment_map.get(arg.lineno)
-                            if help_msg:
-                                field_help[arg.arg] = help_msg
-        except (OSError, TypeError, IndexError):
-            # Source not available (e.g., interactive mode, built-in classes)
-            pass
-        
-        cls.__field_help__ = field_help
+        cls.__field_help__ = LazyFieldHelp()
         return cls
     
     def __call__(cls, *args, **kwargs):

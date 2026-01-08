@@ -20,13 +20,11 @@ options:
   --opt.weight_decay float
 """
 
-from dataclasses import dataclass
-
 import torch.nn as nn
 from torch.optim import SGD as SGD_
 from torch.optim import Adam as Adam_
 
-from parsonaut import Choices, Lazy, Parsable
+from parsonaut import Choices, Lazy, Parsable, dataclass
 
 
 class Model(nn.Module, Parsable):

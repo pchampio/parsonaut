@@ -62,6 +62,8 @@ class ArgumentParser(_ArgumentParser):
         # We allow add_options without dest if it is the only source of
         # args.
         self._lazy_without_dest = False
+        # Store class references for lazy field_help lookup
+        self._field_help_classes = {}
 
         kwargs.setdefault('formatter_class', InlineHelpFormatter)
         super().__init__(*args, **kwargs)
@@ -87,8 +89,8 @@ class ArgumentParser(_ArgumentParser):
     def _add_options(self, lzy: Lazy, prefix: str = ""):
         self.add_argument(f"--{prefix}_class", default=lzy.cls, help=SUPPRESS)
         
-        # Extract help text from dataclass fields if available
-        field_help = getattr(lzy.cls, '__field_help__', {})
+        # Store class reference for lazy field_help lookup during parse_args
+        self._field_help_classes[prefix] = lzy.cls
         
         for k, (typ, value) in sorted(lzy.signature.items()):
             if Lazy.is_lazy_type(typ):
@@ -108,16 +110,22 @@ class ArgumentParser(_ArgumentParser):
                 else:
                     self._add_options(value, prefix=f"{prefix}{k}.")
             else:
-                help_text = field_help.get(k)
-                self.add_option(f"{prefix}{k}", value, typ, help_text=help_text)
+                # Defer help_text - pass field_key for later lookup
+                self.add_option(f"{prefix}{k}", value, typ, help_text=None, field_key=(prefix, k))
 
-    def add_option(self, name, value, typ, help_text=None):
+    def add_option(self, name, value, typ, help_text=None, field_key=None):
         assert isinstance(name, str)
         assert not self._lazy_without_dest
 
         name = f"--{name}"
         check_val = value if value is not Missing else None
         required = False
+        
+        # Store field_key for lazy help lookup
+        if field_key is not None:
+            if not hasattr(self, '_field_keys'):
+                self._field_keys = {}
+            self._field_keys[name] = field_key
         
         def add_default_to_help(help_text, default_val):
             """Helper to append default value to help text."""
@@ -133,15 +141,17 @@ class ArgumentParser(_ArgumentParser):
         union_args, has_none = get_union_args(typ)
         if len(union_args) > 1:
             # Multi-type union: try str2union converter
+            default_val = value if value is not Missing else None
             kwargs = {
                 "type": str2union(*union_args, has_none=has_none),
-                "default": value if value is not Missing else None,
+                "default": default_val,
                 "metavar": "value",
                 "required": required,
                 "nargs": "?" if has_none else None,
             }
-            if help_text:
-                kwargs["help"] = help_text
+            final_help = add_default_to_help(help_text, default_val)
+            if final_help:
+                kwargs["help"] = final_help
             self.add_argument(name, **kwargs)
             return
 
@@ -277,6 +287,26 @@ class ArgumentParser(_ArgumentParser):
 
         self.args[name] = kwargs
 
+    def _inject_field_help(self):
+        """Lazily inject field help text from class __field_help__ attributes."""
+        field_keys = getattr(self, '_field_keys', {})
+        
+        for arg_name, (prefix, field_name) in field_keys.items():
+            cls = self._field_help_classes.get(prefix)
+            if cls is None:
+                continue
+            field_help = getattr(cls, '__field_help__', {})
+            help_text = field_help.get(field_name)
+            if help_text and arg_name in self.args:
+                kwargs = self.args[arg_name]
+                # Merge help text with existing default info
+                existing_help = kwargs.get('help')
+                if existing_help:
+                    # existing_help is like "(default: value)", prepend the description
+                    kwargs['help'] = f"{help_text} {existing_help}"
+                else:
+                    kwargs['help'] = help_text
+
     def parse_args(self, args=None):  # noqa: C901
         from collections import defaultdict
 
@@ -317,6 +347,10 @@ class ArgumentParser(_ArgumentParser):
                 kk = re.sub(r"\[.*?\]\.", "", k)
                 self.args[kk] = self.args[k]
                 del self.args[k]
+
+        # Inject help text only when --help is requested (lazy extraction)
+        if '--help' in args or '-h' in args:
+            self._inject_field_help()
 
         for name in self.args:
             if name in self.aliases:

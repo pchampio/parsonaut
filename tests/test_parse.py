@@ -189,3 +189,39 @@ def test_ArgumentParser_simple_optional():
     parser.add_options(WithOptional.as_lazy())
     args = parser.parse_args(["--b"])
     assert args == WithOptional.as_lazy(b=None)
+
+
+class WithOptionalAndHelp(Parsable):
+    def __init__(
+        self,
+        required_field: str,                      # A required field
+        optional_str: str | None = None,          # Optional string field
+        optional_int: int | None = None,          # Optional int field  
+        normal_str: str = "default",              # Normal string with default
+    ) -> None:
+        pass
+
+
+def test_ArgumentParser_optional_fields_have_help_text():
+    """Optional fields (T | None) should display help text in --help output."""
+    import io
+    import sys
+    
+    parser = ArgumentParser()
+    parser.add_options(WithOptionalAndHelp.as_lazy())
+    
+    # Capture help output
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        parser.parse_args(["--help"])
+    except SystemExit:
+        pass
+    help_output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+    
+    # Verify help text appears for optional fields
+    assert "Optional string field" in help_output
+    assert "Optional int field" in help_output
+    assert "A required field" in help_output
+    assert "Normal string with default" in help_output
